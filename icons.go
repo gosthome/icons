@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sync"
-
-	"fyne.io/fyne/v2"
+	"slices"
 )
 
 //go:generate bash -c "cd _gen && go run ."
@@ -29,12 +27,12 @@ func Parse(s string) (*Icon, error) {
 }
 
 // String implements fmt.Stringer.
-func (i *Icon) String() string {
+func (i Icon) String() string {
 	return i.Collection + ":" + i.Icon
 }
 
 // MarshalText implements encoding.TextMarshaler.
-func (i *Icon) MarshalText() (text []byte, err error) {
+func (i Icon) MarshalText() (text []byte, err error) {
 	return []byte(i.String()), nil
 }
 
@@ -53,36 +51,42 @@ func (i *Icon) UnmarshalText(text []byte) error {
 	return i.UnmarshalString(string(text))
 }
 
-func (i *Icon) GetResource() fyne.Resource {
-	collectionsMux.RLock()
-	defer collectionsMux.RUnlock()
-	coll, ok := collections[i.Collection]
-	if !ok {
+type AllIcons []Icon
+
+func FromCollectionKeys(keys map[string][]string) AllIcons {
+	return slices.Collect(func(yield func(Icon) bool) {
+		for col, icons := range keys {
+			for _, icon := range icons {
+				if !yield(Icon{Collection: col, Icon: icon}) {
+					return
+				}
+			}
+		}
+	})
+}
+
+type IconResource interface {
+	Name() string
+	Content() []byte
+}
+
+type Collections[T any, PT interface {
+	*T
+	IconResource
+}] interface {
+	Lookup(collection, icon string) PT
+}
+
+func GetResource[T any, PT interface {
+	*T
+	IconResource
+}](coll Collections[T, PT], i *Icon) PT {
+	if i == nil {
 		return nil
 	}
-	icon, ok := coll[i.Icon]
-	if !ok {
-		return nil
-	}
-	return icon
+	return coll.Lookup(i.Collection, i.Icon)
 }
 
 var _ encoding.TextUnmarshaler = (*Icon)(nil)
 var _ encoding.TextMarshaler = (*Icon)(nil)
 var _ fmt.Stringer = (*Icon)(nil)
-
-type Collection map[string]*fyne.StaticResource
-
-type Collections map[string]Collection
-
-func RegisteredCollection(name string, c Collection) Collection {
-	collectionsMux.Lock()
-	defer collectionsMux.Unlock()
-	collections[name] = c
-	return c
-}
-
-var (
-	collections    Collections = make(Collections)
-	collectionsMux sync.RWMutex
-)
